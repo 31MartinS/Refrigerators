@@ -304,6 +304,8 @@ Antes de una campaña real configura alertas y revisa periódicamente los logs, 
 | `INVALID_REFRIGERATOR` | Las claves no coinciden o la refrigeradora está inactiva | Usa `violet`, `cyan`, `coral` y `gold`, y comprueba `active = true` |
 | `NO_PRIZES_AVAILABLE` | Todos los pesos son cero o no queda inventario | Activa premios con `weight > 0` y stock disponible |
 | `BOT_CHECK_FAILED` | Se activó el secreto sin integrar el widget | Retira temporalmente el secreto o completa la integración cliente-servidor |
+| `permission denied for function draw_prize_atomic` | Falta el permiso de ejecución para la Edge Function | Actualiza el repositorio y ejecuta `npx supabase@latest db push` para aplicar la migración correctiva |
+| `function gen_random_bytes(integer) does not exist` | La función no encuentra `pgcrypto` en el esquema de extensiones | Actualiza el repositorio y ejecuta `npx supabase@latest db push` |
 | Cloudflare compila pero la app no conecta | Variables ausentes en el entorno correcto | Configúralas en Production/Preview y lanza un nuevo deployment |
 | Una ruta interna da 404 al recargar | Configuración SPA incorrecta | Confirma preset Vite, salida `dist` y ausencia de reglas de redirects incompatibles |
 

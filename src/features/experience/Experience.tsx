@@ -8,23 +8,42 @@ import { campaign, demoPrizes, refrigerators } from '../../lib/config';
 import { drawPrize, registerParticipant } from '../../lib/api';
 import type { DrawResult, ExperienceState, ParticipantInput } from '../../types';
 
-type Model={step:ExperienceState;participantId?:string;selected?:string;result?:DrawResult;error?:string};
-type Action={type:'GO';step:ExperienceState}|{type:'REGISTERED';id:string}|{type:'SELECT';id:string}|{type:'RESULT';result:DrawResult}|{type:'FAIL';message:string}|{type:'RESET'};
+type Model={step:ExperienceState;participantId?:string;selected?:string;result?:DrawResult;error?:string;errorTitle?:string;retryStep?:ExperienceState};
+type Action={type:'GO';step:ExperienceState}|{type:'REGISTERED';id:string}|{type:'SELECT';id:string}|{type:'RESULT';result:DrawResult}|{type:'FAIL';message:string;title?:string;retryStep?:ExperienceState}|{type:'RESET'};
 const initial:Model={step:'LANDING'};
-function reducer(s:Model,a:Action):Model{switch(a.type){case'GO':return{...s,step:a.step};case'REGISTERED':return{...s,participantId:a.id,step:'PRIZES'};case'SELECT':return{...s,selected:a.id,step:'LOCKING_SELECTION'};case'RESULT':return{...s,result:a.result,step:'REVEAL_ANIMATION'};case'FAIL':return{...s,error:a.message,step:'ERROR'};case'RESET':return initial}}
+function reducer(s:Model,a:Action):Model{switch(a.type){case'GO':return{...s,step:a.step,error:undefined,errorTitle:undefined,retryStep:undefined};case'REGISTERED':return{...s,participantId:a.id,step:'PRIZES'};case'SELECT':return{...s,selected:a.id,step:'LOCKING_SELECTION'};case'RESULT':return{...s,result:a.result,step:'REVEAL_ANIMATION'};case'FAIL':return{...s,error:a.message,errorTitle:a.title,retryStep:a.retryStep,step:'ERROR'};case'RESET':return initial}}
+
+const errorCode=(error:unknown)=>error instanceof Error?error.message:'UNKNOWN_ERROR';
+function registrationError(error:unknown){
+ switch(errorCode(error)){
+  case'ALREADY_PARTICIPATED':return{title:'Ya registramos tu participación',message:'Este correo o número de identificación ya participó en la campaña. Solo se permite una participación por persona.'};
+  case'INVALID_INPUT':return{title:'Revisa tus datos',message:'Uno o más datos no son válidos. Comprueba el formulario e inténtalo nuevamente.'};
+  default:return{title:'No pudimos completar el registro',message:'Ocurrió un problema al registrar tu participación. Espera un momento e inténtalo nuevamente.'};
+ }
+}
+function drawError(error:unknown){
+ switch(errorCode(error)){
+  case'NO_PRIZES_AVAILABLE':return{title:'Premios agotados',message:'En este momento no quedan premios disponibles. Comunícate con el equipo de la campaña.'};
+  case'INVALID_REFRIGERATOR':return{title:'Selección no disponible',message:'La refrigeradora elegida ya no está disponible. Actualiza la página para consultar las opciones vigentes.'};
+  case'PARTICIPATION_NOT_FOUND':return{title:'No encontramos tu participación',message:'No fue posible localizar tu registro. Vuelve al inicio y completa nuevamente el formulario.'};
+  case'BOT_CHECK_FAILED':return{title:'No pudimos verificarte',message:'La validación de seguridad no se completó. Actualiza la página e inténtalo nuevamente.'};
+  case'STOCK_CONFLICT':return{title:'Estamos confirmando el inventario',message:'Otro sorteo actualizó el último premio disponible. Vuelve a intentarlo para recuperar un resultado válido.'};
+  default:return{title:'No pudimos revelar tu premio',message:'Tu participación quedó registrada. Vuelve a intentarlo para recuperar el resultado sin repetir el sorteo.'};
+ }
+}
 
 export function Experience(){
  const [state,dispatch]=useReducer(reducer,initial); const reduced=useReducedMotion();
  useEffect(()=>{if(state.step==='REVEAL_ANIMATION'){const t=setTimeout(()=>dispatch({type:'GO',step:'RESULTS'}),reduced?500:3600);return()=>clearTimeout(t)}},[state.step,reduced]);
- async function submit(input:ParticipantInput){dispatch({type:'GO',step:'REGISTERING'});try{const r=await registerParticipant(input);dispatch({type:'REGISTERED',id:r.participantId})}catch{dispatch({type:'FAIL',message:'No pudimos registrar tu participación. Revisa tu conexión e inténtalo de nuevo.'})}}
- async function select(id:string){if(state.step!=='SELECTING'||!state.participantId)return;dispatch({type:'SELECT',id});try{const result=await drawPrize(state.participantId,id);dispatch({type:'RESULT',result})}catch{dispatch({type:'FAIL',message:'Tu selección está segura. Reconecta para recuperar el resultado sin repetir el sorteo.'})}}
+ async function submit(input:ParticipantInput){dispatch({type:'GO',step:'REGISTERING'});try{const r=await registerParticipant(input);dispatch({type:'REGISTERED',id:r.participantId})}catch(error){dispatch({type:'FAIL',...registrationError(error),retryStep:'FORM'})}}
+ async function select(id:string){if(state.step!=='SELECTING'||!state.participantId)return;dispatch({type:'SELECT',id});try{const result=await drawPrize(state.participantId,id);dispatch({type:'RESULT',result})}catch(error){dispatch({type:'FAIL',...drawError(error),retryStep:'SELECTING'})}}
  return <main className="experience"><Brand/><div className="progress" aria-label="Progreso"><i className={state.step!=='LANDING'?'done':''}/><i className={['PRIZES','SELECTING','LOCKING_SELECTION','REVEAL_ANIMATION','RESULTS'].includes(state.step)?'done':''}/><i className={['SELECTING','LOCKING_SELECTION','REVEAL_ANIMATION','RESULTS'].includes(state.step)?'done':''}/><i className={state.step==='RESULTS'?'done':''}/></div><AnimatePresence mode="wait">
   {state.step==='LANDING'&&<Landing key="landing" start={()=>dispatch({type:'GO',step:'FORM'})}/>} 
   {['FORM','REGISTERING'].includes(state.step)&&<EntryForm key="form" busy={state.step==='REGISTERING'} onSubmit={submit}/>} 
   {state.step==='PRIZES'&&<PrizeShowcase key="prizes" next={()=>dispatch({type:'GO',step:'SELECTING'})}/>} 
   {['SELECTING','LOCKING_SELECTION','REVEAL_ANIMATION'].includes(state.step)&&<Selection key="selection" state={state} onSelect={select}/>} 
   {state.step==='RESULTS'&&state.result&&<Results key="results" result={state.result} reset={()=>dispatch({type:'RESET'})}/>} 
-  {state.step==='ERROR'&&<ErrorView key="error" message={state.error??'Ocurrió un error.'} retry={()=>dispatch({type:'RESET'})}/>} 
+  {state.step==='ERROR'&&<ErrorView key="error" title={state.errorTitle} message={state.error??'Ocurrió un error.'} retry={()=>dispatch(state.retryStep?{type:'GO',step:state.retryStep}:{type:'RESET'})}/>} 
  </AnimatePresence></main>
 }
 
@@ -92,4 +111,4 @@ function Selection({state,onSelect}:{state:Model;onSelect:(id:string)=>void}){
 }
 
 function Results({result,reset}:{result:DrawResult;reset:()=>void}){return <motion.section {...screen} className="results screen"><span className="eyebrow"><Sparkles size={14}/>TU ELECCIÓN TENÍA PREMIO</span><h1>¡Felicidades!</h1><p className="won">GANASTE</p><div className="prize-orb" style={{'--prize':result.prize.color} as React.CSSProperties}><span><PrizeIcon prizeId={result.prize.id}/></span></div><h2>{result.prize.name}</h2><p>{result.prize.description}</p><aside className="instant-delivery"><Check/><div><b>Premio entregado</b><p>{result.prize.claimInstructions}</p></div></aside><button className="primary" onClick={reset}>FINALIZAR<Check/></button></motion.section>}
-function ErrorView({message,retry}:{message:string;retry:()=>void}){return <motion.section {...screen} className="error-view screen"><div className="error-icon">!</div><h1>Algo interrumpió la experiencia</h1><p>{message}</p><button className="primary" onClick={retry}><RotateCcw/>VOLVER A INTENTAR</button></motion.section>}
+function ErrorView({title,message,retry}:{title?:string;message:string;retry:()=>void}){return <motion.section {...screen} className="error-view screen"><div className="error-icon">!</div><h1>{title??'Algo interrumpió la experiencia'}</h1><p>{message}</p><button className="primary" onClick={retry}><RotateCcw/>VOLVER A INTENTAR</button></motion.section>}
